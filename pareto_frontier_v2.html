@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pareto Frontier — Cost vs CO₂ Emissions</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Poppins', sans-serif;
+    background: #f5f0e8;
+    color: #111111;
+    padding: 32px 40px 36px;
+    min-height: 100vh;
+  }
+  h1 {
+    font-size: 22px;
+    font-weight: 800;
+    color: #1a1a1a;
+    text-align: center;
+    letter-spacing: 0.5px;
+    margin-bottom: 20px;
+    text-transform: uppercase;
+  }
+  .chart-outer {
+    position: relative;
+    width: 100%;
+    background: #f5f0e8;
+  }
+  .chart-container {
+    position: relative;
+    width: 100%;
+    height: 460px;
+  }
+  .beta-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 18px;
+    font-size: 12px;
+    color: #111111;
+    font-weight: 500;
+  }
+  .beta-row input[type=range] {
+    flex: 1;
+    accent-color: #2b5c7e;
+    cursor: pointer;
+  }
+  .beta-val {
+    font-size: 14px;
+    font-weight: 700;
+    color: #111111;
+    min-width: 68px;
+  }
+  .decision-badge {
+    font-family: 'Poppins', sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 14px;
+    border-radius: 20px;
+    background: #d4edda;
+    color: #1a5c34;
+    white-space: nowrap;
+    transition: background 0.25s, color 0.25s;
+    border: 1.5px solid #1a5c34;
+  }
+</style>
+</head>
+<body>
+
+<h1>Pareto Frontier: Cost vs CO<sub style="font-size:16px;text-transform:none">2</sub> Emissions</h1>
+
+<div class="chart-outer">
+  <div class="chart-container">
+    <canvas id="pfChart"></canvas>
+  </div>
+
+  <div class="beta-row">
+    <span style="font-weight:600">Adjust β:</span>
+    <input type="range" min="10" max="50" value="10" step="1" id="betaSlider">
+    <span class="beta-val" id="betaDisplay">β = 1.0</span>
+    <span class="decision-badge" id="betaDecision">DGU selected — optimal</span>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const FONT = "'Poppins', sans-serif";
+const BG   = '#f5f0e8';
+const gc   = 'rgba(0,0,0,0.08)';
+const lc   = '#222222';
+
+/* ── data points ── */
+const ptA = { x: 0,  y: 23000, label: 'A', tag: '$23,000 | 0t\nAll-Shed',        color: '#2b5c7e', r: 10 };
+const ptB = { x: 18, y: 17720, label: 'B', tag: '$17,720 | 18t\nβ=3.0',           color: '#2b5c7e', r: 10 };
+const ptC = { x: 36, y: 17240, label: 'C', tag: '$17,240 | 36t\noptimal β=1.0',   color: '#c8922a', r: 0,  isStar: true };
+const ptD = { x: 81, y: 20790, label: 'D', tag: 'All-Diesel\n$20,790 | 81t',      color: '#7a3e3e', r: 10 };
+
+const frontier = [
+  { x: 0,  y: 23000 },
+  { x: 10, y: 20800 },
+  { x: 18, y: 17720 },
+  { x: 26, y: 17400 },
+  { x: 36, y: 17240 },
+];
+
+/* active point starts at C (β=1.0) */
+let activeX = 36, activeY = 17240;
+
+/* ── custom annotation plugin ── */
+const annotPlugin = {
+  id: 'paretoAnnot',
+  afterDraw(chart) {
+    const { ctx: c, scales: { x, y }, chartArea } = chart;
+    c.save();
+
+    const beta     = parseFloat(document.getElementById('betaSlider').value) / 10;
+    const inverted = beta >= 2.78;
+
+    /* ── draw star at C ── */
+    const cx = x.getPixelForValue(36);
+    const cy = y.getPixelForValue(17240);
+    drawStar(c, cx, cy, 14, '#c8922a', '#8a6010');
+
+    /* ── draw circle nodes A, B, D ── */
+    [ptA, ptB, ptD].forEach(pt => {
+      const px = x.getPixelForValue(pt.x);
+      const py = y.getPixelForValue(pt.y);
+      c.beginPath();
+      c.arc(px, py, 12, 0, Math.PI * 2);
+      c.fillStyle   = pt.color;
+      c.fill();
+      c.strokeStyle = '#ffffff';
+      c.lineWidth   = 2;
+      c.stroke();
+      c.fillStyle  = '#ffffff';
+      c.font       = "700 10px 'Poppins', sans-serif";
+      c.textAlign  = 'center';
+      c.textBaseline = 'middle';
+      c.fillText(pt.label, px, py);
+    });
+
+    /* ── callout boxes ── */
+    drawCallout(c, x.getPixelForValue(0),  y.getPixelForValue(23000), '$23,000 | 0t', 'All-Shed', 'right', -18, 0);
+    drawCallout(c, x.getPixelForValue(18), y.getPixelForValue(17720), '$17,720 | 18t', 'β=3.0', 'right', -14, 0);
+    drawCallout(c, x.getPixelForValue(36), y.getPixelForValue(17240), '$17,240 | 36t', 'optimal  β=1.0 (Optimal)', 'center', 0, 32);
+    drawCallout(c, x.getPixelForValue(81), y.getPixelForValue(20790), 'All-Diesel', '$20,790 | 81t', 'left', 18, -28);
+
+    /* ── active β ring ── */
+    const apx = x.getPixelForValue(activeX);
+    const apy = y.getPixelForValue(activeY);
+    c.beginPath();
+    c.arc(apx, apy, inverted ? 20 : 20, 0, Math.PI * 2);
+    c.strokeStyle = inverted ? '#7F77DD' : '#c8922a';
+    c.lineWidth   = 2.5;
+    c.setLineDash([5, 3]);
+    c.stroke();
+    c.setLineDash([]);
+
+    /* ── dashed arrow A→D ── */
+    const ax1 = x.getPixelForValue(0)  + 14;
+    const ay1 = y.getPixelForValue(23000);
+    const ax2 = x.getPixelForValue(81) - 14;
+    const ay2 = y.getPixelForValue(20790);
+    c.beginPath();
+    c.moveTo(ax1, ay1);
+    c.lineTo(ax2, ay2);
+    c.strokeStyle = '#888888';
+    c.lineWidth   = 1.5;
+    c.setLineDash([6, 4]);
+    c.stroke();
+    c.setLineDash([]);
+    drawArrowHead(c, ax2, ay2, Math.atan2(ay2 - ay1, ax2 - ax1), '#888888');
+
+    /* ── "trade cost for lower carbon" label on dashed arrow ── */
+    const midX = (ax1 + ax2) / 2;
+    const midY = (ay1 + ay2) / 2 - 14;
+    c.fillStyle    = BG;
+    const tw = 148, th = 22;
+    c.fillRect(midX - tw/2, midY - th/2 - 2, tw, th);
+    c.fillStyle    = '#444444';
+    c.font         = "500 10px 'Poppins', sans-serif";
+    c.textAlign    = 'center';
+    c.textBaseline = 'middle';
+    c.fillText('→ trade cost for lower carbon', midX, midY);
+
+    /* ── NEVER guard callout (bottom-left) ── */
+    const gx = chartArea.left + 10;
+    const gy = chartArea.bottom - 14;
+    c.fillStyle   = '#f5f0e8';
+    c.strokeStyle = '#2b5c7e';
+    c.lineWidth   = 1.5;
+    const gw = 178, gh = 28, gr = 6;
+    roundRect(c, gx, gy - gh, gw, gh, gr);
+    c.fill(); c.stroke();
+    c.fillStyle    = '#cc0000';
+    c.font         = "700 11px 'Poppins', sans-serif";
+    c.textAlign    = 'left';
+    c.textBaseline = 'middle';
+    c.fillText('NEVER', gx + 10, gy - gh/2);
+    c.fillStyle = '#111111';
+    c.font      = "500 11px 'Poppins', sans-serif";
+    c.fillText('-hardcoded guard', gx + 10 + c.measureText('NEVER').width, gy - gh/2);
+
+    /* ── Critical Process callout (top-left) ── */
+    const cpx = chartArea.left + 14;
+    const cpy = chartArea.top  + 10;
+    c.fillStyle   = '#f5f0e8';
+    c.strokeStyle = '#2b5c7e';
+    c.lineWidth   = 1.5;
+    roundRect(c, cpx, cpy, 160, 40, 6);
+    c.fill(); c.stroke();
+    c.fillStyle    = '#111111';
+    c.font         = "600 10px 'Poppins', sans-serif";
+    c.textAlign    = 'left';
+    c.textBaseline = 'top';
+    c.fillText('Critical Process', cpx + 10, cpy + 7);
+    c.font      = "700 11px 'Poppins', sans-serif";
+    c.fillStyle = '#cc0000';
+    c.fillText('>$1,000,000+', cpx + 10, cpy + 22);
+
+    /* ── legend box ── */
+    const lbx = chartArea.right - 160;
+    const lby = chartArea.bottom - 90;
+    c.fillStyle   = '#f5f0e8';
+    c.strokeStyle = '#999999';
+    c.lineWidth   = 0.8;
+    roundRect(c, lbx, lby, 150, 82, 6);
+    c.fill(); c.stroke();
+    c.fillStyle = '#111111';
+    c.font      = "700 10px 'Poppins', sans-serif";
+    c.textAlign = 'left';
+    c.fillText('LEGEND', lbx + 10, lby + 14);
+    legendItem(c, lbx + 10, lby + 30, '#2b5c7e', 'circle', 'All-Diesel');
+    legendItem(c, lbx + 10, lby + 48, '#1D9E75', 'circle', 'Optimal Strategy');
+    legendItemStar(c, lbx + 10, lby + 66, '#c8922a', 'β=1.0 (Optimal)');
+
+    c.restore();
+  }
+};
+
+function drawStar(c, cx, cy, size, fill, stroke) {
+  c.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const outerA = (Math.PI / 2) + (2 * Math.PI * i / 5);
+    const innerA = outerA + Math.PI / 5;
+    const ox = cx + Math.cos(outerA) * size;
+    const oy = cy - Math.sin(outerA) * size;
+    const ix = cx + Math.cos(innerA) * (size * 0.42);
+    const iy = cy - Math.sin(innerA) * (size * 0.42);
+    i === 0 ? c.moveTo(ox, oy) : c.lineTo(ox, oy);
+    c.lineTo(ix, iy);
+  }
+  c.closePath();
+  c.fillStyle   = fill;
+  c.fill();
+  c.strokeStyle = stroke;
+  c.lineWidth   = 1.5;
+  c.stroke();
+}
+
+function drawArrowHead(c, x, y, angle, color) {
+  const size = 8;
+  c.save();
+  c.translate(x, y);
+  c.rotate(angle);
+  c.beginPath();
+  c.moveTo(0, 0);
+  c.lineTo(-size, -size / 2);
+  c.lineTo(-size,  size / 2);
+  c.closePath();
+  c.fillStyle = color;
+  c.fill();
+  c.restore();
+}
+
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.lineTo(x + w - r, y);
+  c.arcTo(x + w, y, x + w, y + r, r);
+  c.lineTo(x + w, y + h - r);
+  c.arcTo(x + w, y + h, x + w - r, y + h, r);
+  c.lineTo(x + r, y + h);
+  c.arcTo(x, y + h, x, y + h - r, r);
+  c.lineTo(x, y + r);
+  c.arcTo(x, y, x + r, y, r);
+  c.closePath();
+}
+
+function drawCallout(c, px, py, line1, line2, align, offX, offY) {
+  c.font = "600 10px 'Poppins', sans-serif";
+  const w1 = c.measureText(line1).width;
+  c.font = "500 10px 'Poppins', sans-serif";
+  const w2 = c.measureText(line2).width;
+  const bw = Math.max(w1, w2) + 20;
+  const bh = 34;
+  let bx = px + offX;
+  const by = py + offY;
+  if (align === 'center') bx -= bw / 2;
+  else if (align === 'right')  bx -= bw + 4;
+
+  c.fillStyle   = '#f5f0e8';
+  c.strokeStyle = 'rgba(0,0,0,0.18)';
+  c.lineWidth   = 0.8;
+  roundRect(c, bx, by, bw, bh, 5);
+  c.fill(); c.stroke();
+
+  c.fillStyle    = '#111111';
+  c.font         = "700 10px 'Poppins', sans-serif";
+  c.textAlign    = 'left';
+  c.textBaseline = 'top';
+  c.fillText(line1, bx + 10, by + 6);
+  c.font      = "400 10px 'Poppins', sans-serif";
+  c.fillStyle = '#333333';
+  c.fillText(line2, bx + 10, by + 20);
+}
+
+function legendItem(c, x, y, color, shape, label) {
+  c.beginPath();
+  c.arc(x + 6, y, 5, 0, Math.PI * 2);
+  c.fillStyle = color;
+  c.fill();
+  c.fillStyle    = '#111111';
+  c.font         = "400 10px 'Poppins', sans-serif";
+  c.textAlign    = 'left';
+  c.textBaseline = 'middle';
+  c.fillText(label, x + 16, y);
+}
+
+function legendItemStar(c, x, y, color, label) {
+  drawStar(c, x + 6, y, 6, color, '#8a6010');
+  c.fillStyle    = '#111111';
+  c.font         = "400 10px 'Poppins', sans-serif";
+  c.textAlign    = 'left';
+  c.textBaseline = 'middle';
+  c.fillText(label, x + 16, y);
+}
+
+Chart.register(annotPlugin);
+
+const chart = new Chart(document.getElementById('pfChart'), {
+  type: 'scatter',
+  data: {
+    datasets: [
+      {
+        label: 'Pareto frontier',
+        type: 'line',
+        data: frontier,
+        borderColor: '#2b5c7e',
+        borderWidth: 3,
+        pointRadius: 0,
+        fill: false,
+        tension: 0.35,
+        order: 0,
+      },
+      {
+        label: 'Ghost points (invisible, for axis range)',
+        type: 'scatter',
+        data: [{ x: 0, y: 23000 }, { x: 81, y: 20790 }, { x: 36, y: 17240 }],
+        pointRadius: 0,
+        order: 99,
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 300 },
+    layout: { padding: { top: 20, right: 30, bottom: 40, left: 10 } },
+    plugins: {
+      legend: { display: false },
+      tooltip: { enabled: false }
+    },
+    scales: {
+      x: {
+        min: -5,
+        max: 95,
+        title: {
+          display: true,
+          text: 'CO₂ Emissions (t/hr)',
+          color: lc,
+          font: { family: FONT, size: 12, weight: '600' }
+        },
+        ticks: {
+          color: lc,
+          font: { family: FONT, size: 10 },
+          stepSize: 10,
+          callback: v => v + 't'
+        },
+        grid: { color: gc }
+      },
+      y: {
+        min: 9000,
+        max: 27000,
+        title: {
+          display: true,
+          text: 'Financial Cost ($/hr)',
+          color: lc,
+          font: { family: FONT, size: 12, weight: '600' }
+        },
+        ticks: {
+          color: lc,
+          font: { family: FONT, size: 10 },
+          stepSize: 5000,
+          callback: v => '$' + Math.round(v / 1000) + 'k'
+        },
+        grid: { color: gc }
+      }
+    }
+  }
+});
+
+/* right-axis label "EFT CO₂/hr (t/hr)" drawn manually */
+const origAfterDraw = annotPlugin.afterDraw.bind(annotPlugin);
+annotPlugin.afterDraw = function(chart) {
+  origAfterDraw(chart);
+  const { ctx: c, chartArea } = chart;
+  c.save();
+  c.translate(chartArea.right + 28, (chartArea.top + chartArea.bottom) / 2);
+  c.rotate(Math.PI / 2);
+  c.fillStyle    = '#111111';
+  c.font         = "600 11px 'Poppins', sans-serif";
+  c.textAlign    = 'center';
+  c.textBaseline = 'middle';
+  c.fillText('EFT CO₂/hr (t/hr)', 0, 0);
+  c.restore();
+};
+
+/* ── slider interaction ── */
+document.getElementById('betaSlider').addEventListener('input', function () {
+  const beta     = parseFloat(this.value) / 10;
+  const inverted = beta >= 2.78;
+
+  document.getElementById('betaDisplay').textContent = 'β = ' + beta.toFixed(1);
+
+  const badge = document.getElementById('betaDecision');
+  if (inverted) {
+    badge.textContent      = 'Mill shed selected';
+    badge.style.background = '#ede9fb';
+    badge.style.color      = '#3C3489';
+    badge.style.borderColor= '#534AB7';
+    activeX = 18; activeY = 17720;
+  } else {
+    badge.textContent      = 'DGU selected — optimal';
+    badge.style.background = '#d4edda';
+    badge.style.color      = '#1a5c34';
+    badge.style.borderColor= '#1a5c34';
+    activeX = 36; activeY = 17240;
+  }
+  chart.update('active');
+});
+</script>
+</body>
+</html>
